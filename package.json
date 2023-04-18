@@ -1,0 +1,25 @@
+{
+  "name": "MMM-VideoServerPlayer",
+  "version": "2.0.1",
+  "description": "Play local videos in loop when MagicMirror is running in server-only mode",
+  "main": "MMM-VideoServerPlayer.js",
+  "author": "Andrés Vanegas <ukab72106@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "url": "https://github.com/angeldeejay/MMM-VideoServerPlayer"
+  },
+  "devDependencies": {
+    "prettier": "^2.8.4"
+  },
+  "scripts": {
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
+    "test": "npm run lint"
+  },
+  "dependencies": {
+    "mime": "^3.0.0",
+    "video.js": "^8.3.0",
+    "videojs-errors": "^6.0.0",
+    "videojs-playlist": "^5.1.0"
+  }
+}
