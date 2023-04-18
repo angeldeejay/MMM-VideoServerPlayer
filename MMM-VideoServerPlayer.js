@@ -40,7 +40,7 @@ Module.register("MMM-VideoServerPlayer", {
 
     this.updateDom();
     this.sendNotification("RESET", true);
-    setInterval(() => this.sendNotification("SET_CONFIG", this.config), 5000);
+    setInterval(() => this.sendNotification("SET_CONFIG", this.config), 1000);
   },
 
   refresh: function () {

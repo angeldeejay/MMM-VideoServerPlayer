@@ -19,7 +19,6 @@
   "dependencies": {
     "mime": "^3.0.0",
     "video.js": "^8.3.0",
-    "videojs-errors": "^6.0.0",
-    "videojs-playlist": "^5.1.0"
+    "videojs-errors": "^6.0.0"
   }
 }
