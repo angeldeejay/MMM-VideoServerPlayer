@@ -15,22 +15,36 @@ module.exports = NodeHelper.create({
   name: path.basename(__dirname),
   logPrefix: `${path.basename(__dirname)} :: `,
   videos: [],
-  encodedVideos: [],
-  ready: false,
+  currentVideo: null,
+  busy: false,
+  shuffle: true,
 
   start() {
-    this.ready = false;
-    this.videos = [];
-    this.encodedVideos = [];
     this.busy = false;
+    this.shuffle = true;
+    this.videos = [];
+    this.currentVideo = { index: null };
     Log.info(`${this.logPrefix}Started`);
   },
 
-  processConfig(config) {
-    if (this.busy || !Object.keys(config).includes("videos")) {
-      return;
+  shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
     }
+    return array;
+  },
+
+  processConfig(payload) {
+    if (this.busy) return;
+
     this.busy = true;
+    const config = {
+      videos: payload.videos ?? [],
+      currentIndex: payload.currentIndex ?? null,
+      shuffle: payload.shuffle ?? true
+    };
+
     const payloadVideos = config.videos
       .filter((v, i, self) => self.indexOf(v) === i)
       .filter((v) => fs.existsSync(v));
@@ -40,40 +54,31 @@ module.exports = NodeHelper.create({
     const newVideos = payloadVideos.filter((v) => !currentVideos.includes(v));
     const delVideos = currentVideos.filter((v) => !payloadVideos.includes(v));
     const changes = newVideos.length + delVideos.length;
-    if (changes > 0) {
-      Log.debug(`${this.logPrefix}${changes} videos received`);
-      this.videos = payloadVideos;
-      this.updateVideos();
-    } else {
-      this.busy = false;
-      this.ready = true;
+    if (changes > 0 || this.shuffle !== config.shuffle) {
+      Log.info(`${this.logPrefix}${changes} videos received`);
+      this.shuffle = config.shuffle;
+      this.videos = this.shuffle
+        ? this.shuffleArray(payloadVideos)
+        : payloadVideos;
     }
+
+    if (this.videos.length > 0 && this.currentVideo.index === null) {
+      this.encode(0);
+    }
+    this.busy = false;
   },
 
-  updateVideos() {
-    if (this.videos.length === 0) {
-      this.encodedVideos = [];
-      this.sendNotification("UPDATE_VIDEOS", this.encodedVideos);
-      this.busy = false;
-    }
-    try {
-      this.encodedVideos = this.videos.map((v) => {
-        Log.debug(`${this.logPrefix}Encoding video ${path.basename(v)}`);
-        const videoMimeType = mime.getType(v);
-        const encodedVideo = fs.readFileSync(v, { encoding: "base64" });
-        return {
-          name: path.basename(v),
-          src: `data:${videoMimeType};base64,${encodedVideo}`,
-          type: videoMimeType
-        };
-      });
-      this.sendNotification("UPDATE_VIDEOS", this.encodedVideos);
-      this.busy = false;
-      this.ready = true;
-    } catch (err) {
-      Log.error(`${this.logPrefix}${err}`);
-      setTimeout(() => this.updateVideos(), 1000);
-    }
+  encode(index) {
+    const v = this.videos[index];
+    Log.info(`${this.logPrefix}Encoding video ${path.basename(v)}`);
+    const videoMimeType = mime.getType(v);
+    const encodedVideo = fs.readFileSync(v, { encoding: "base64" });
+    this.currentVideo = {
+      index: index,
+      name: path.basename(v),
+      src: `data:${videoMimeType};base64,${encodedVideo}`,
+      type: videoMimeType
+    };
   },
 
   sendNotification(notification, payload) {
@@ -82,19 +87,23 @@ module.exports = NodeHelper.create({
 
   socketNotificationReceived(type, payload) {
     const notification = type.replace(`${this.name}-`, "");
+    const payloadIndex = payload.currentIndex ?? null;
     switch (notification) {
-      case "RESET":
-        this.busy = true;
-        Log.debug(`${this.logPrefix}Received reset signal`);
-        this.videos = [];
-        this.encodedVideos = [];
-        this.sendNotification("READY", true);
-        this.ready = true;
-        this.busy = false;
-        break;
       case "SET_CONFIG":
-        if (!this.busy) {
-          this.processConfig(payload);
+        this.processConfig(payload);
+        if (payloadIndex != this.currentVideo.index) {
+          this.sendNotification("CURRENT_VIDEO", this.currentVideo);
+        }
+        break;
+      case "NEXT":
+        if (this.videos.length === 0) {
+          this.currentVideo = { index: null };
+        } else if (this.currentVideo.index === null) {
+          this.encode(0);
+        } else if (payloadIndex !== null) {
+          const nextIndex = (payloadIndex + 1) % this.videos.length;
+          if (nextIndex === 0) this.encode(0);
+          else this.encode(nextIndex);
         }
         break;
       default:

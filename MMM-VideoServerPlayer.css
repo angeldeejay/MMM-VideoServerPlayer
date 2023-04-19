@@ -1,4 +1,7 @@
 /* stylelint-disable selector-class-pattern */
+.region.fullscreen.below {
+  background-color: #000000 !important;
+}
 .region.fullscreen.below .module.MMM-VideoServerPlayer,
 .region.fullscreen.below .module.MMM-VideoServerPlayer .module-content,
 .region.fullscreen.below
@@ -12,7 +15,7 @@
   padding-left: 0 !important;
   padding-right: 0 !important;
   padding-bottom: 0 !important;
-  opacity: 0.9 !important;
+  opacity: 0.85 !important;
   overflow: hidden !important;
 }
 

@@ -20,7 +20,8 @@ Module.register("MMM-VideoServerPlayer", {
   defaults: {
     videos: [],
     width: 640,
-    height: 480
+    height: 480,
+    shuffle: true
   },
   name: "MMM-VideoServerPlayer",
   logPrefix: "MMM-VideoServerPlayer :: ",
@@ -30,8 +31,8 @@ Module.register("MMM-VideoServerPlayer", {
   wrapper: null,
   playerWrapper: null,
   player: null,
-  playlist: [],
-  updateTimer: null,
+  currentVideo: null,
+  ready: false,
 
   // Overrides start method
   start() {
@@ -40,82 +41,57 @@ Module.register("MMM-VideoServerPlayer", {
       ...this.config,
       videos: (this.config.videos ?? []).filter(
         (v, i, self) => self.indexOf(v) === i
-      )
+      ),
+      shuffle:
+        typeof this.config.shuffle !== "undefined"
+          ? this.config.shuffle !== false && this.config.shuffle !== null
+          : true
     };
 
-    this.playlist = [];
+    this.ready = false;
+    this.wrapper = null;
+    this.playerWrapper = null;
+    this.player = null;
+    this.currentVideo = null;
     this.updateDom();
-    this.updateTimer = setInterval(
-      () => this.sendNotification("RESET", true),
-      1000
+    setInterval(
+      () =>
+        this.sendNotification("SET_CONFIG", {
+          videos: this.config.videos,
+          shuffle: this.config.shuffle,
+          currentIndex: this.currentVideo?.index ?? null
+        }),
+      100
     );
   },
 
-  refresh: function () {
-    window.location.reload(true);
-  },
+  changeCurrentVideo(videoData) {
+    if (
+      typeof videoData !== "object" ||
+      videoData === null ||
+      !Object.prototype.hasOwnProperty.call(videoData, "name") ||
+      (this.currentVideo !== null && videoData.name === this.currentVideo.name)
+    )
+      return;
 
-  changeVideoSource(index) {
-    if (this.playlist.length == 0) return;
+    if (!this.ready) {
+      setTimeout(() => this.changeCurrentVideo(videoData), 100);
+      return;
+    }
 
-    Log.info(
-      `${this.logPrefix}Changing source to position ${
-        index + 1
-      }: ${JSON.stringify(this.playlist[index].name)}`
-    );
+    this.currentVideo = videoData;
+    Log.info(`${this.logPrefix}Playing now: ${videoData.name}`);
     this.player.src({
-      src: this.playlist[index].src,
-      type: this.playlist[index].type
+      src: this.currentVideo.src,
+      type: this.currentVideo.type
     });
   },
 
-  updateVideos(videos) {
-    if (!videos || !Array.isArray(videos)) {
-      this.sendNotification("RESET", true);
-      return;
-    } else if (this.player === null) {
-      setTimeout(() => this.updateVideos(videos), 1000);
-      return;
-    }
-
-    this.playlist = videos;
-    if (videos.length > 0) {
-      this.changeVideoSource(0);
-    } else {
-      this.player.pause();
-      this.player.currentTime(0);
-    }
-    this.updateDom();
-  },
-
   /**
-   * Notification send helper method
-   * @param {string} notification notification type
-   * @param {any} payload notification payload
+   * Detects if player is in fullscreen region
+   * @param {DOMElement} element
+   * @returns
    */
-  sendNotification(notification, payload) {
-    this.sendSocketNotification(`${this.name}-${notification}`, payload);
-  },
-
-  // Override socket notification received method
-  socketNotificationReceived(notification, payload) {
-    const self = this;
-    switch (notification.replace(`${this.name}-`, "")) {
-      case "READY":
-        clearInterval(this.updateTimer);
-        this.updateTimer = setInterval(
-          () => this.sendNotification("SET_CONFIG", this.config),
-          1000
-        );
-
-        break;
-      case "UPDATE_VIDEOS":
-        this.updateVideos(payload);
-        break;
-      default:
-    }
-  },
-
   inFullscreenRegion(element) {
     if (element.parentNode) {
       if (
@@ -131,27 +107,72 @@ Module.register("MMM-VideoServerPlayer", {
     return false;
   },
 
-  // Override function to retrieve DOM elements
-  getDom() {
-    if (!this.wrapper) {
-      this.wrapper = document.createElement("div");
-      this.wrapper.classList.add(`wrapper_${this.name}`);
-      this.wrapper.style.width = `${this.config.width}px`;
-      this.wrapper.style.height = `${this.config.height}px`;
-    } else if (
-      !this.playerWrapper &&
-      this.wrapper &&
-      this.wrapper.offsetParent !== null
-    ) {
-      this.playerWrapper = document.createElement("video-js");
-      this.playerWrapper.classList.add(`player_${this.name}`);
-      this.playerWrapper.setAttribute("id", `player_${this.identifier}-0`);
-      this.wrapper.appendChild(this.playerWrapper);
-    } else if (
-      !this.player &&
-      this.playerWrapper &&
-      this.playerWrapper.offsetParent !== null
-    ) {
+  deletePlayer() {
+    try {
+      this.player.dispose();
+    } catch (_) {}
+    this.player = null;
+  },
+
+  /**
+   * Create wrapper DOM element
+   */
+  createWrapper() {
+    new Promise((resolve, reject) => {
+      if (this.wrapper !== null) resolve();
+      try {
+        this.wrapper = document.createElement("div");
+        this.wrapper.classList.add(`wrapper_${this.name}`);
+        this.wrapper.style.width = `${this.config.width}px`;
+        this.wrapper.style.height = `${this.config.height}px`;
+        resolve();
+      } catch (e) {
+        reject();
+      }
+    })
+      .then(() => {
+        setTimeout(() => this.createPlayerWrapper(), 1);
+      })
+      .catch(() => {
+        this.deletePlayer();
+        setTimeout(() => this.createWrapper(), 100);
+      });
+  },
+
+  /**
+   * Create player wrapper DOM element
+   */
+  createPlayerWrapper() {
+    new Promise((resolve, reject) => {
+      if (!this.wrapper || this.wrapper.offsetParent === null) reject();
+      if (this.playerWrapper !== null) resolve();
+      try {
+        this.playerWrapper = document.createElement("video-js");
+        this.playerWrapper.classList.add(`player_${this.name}`);
+        this.playerWrapper.setAttribute("id", `player_${this.identifier}-0`);
+        this.wrapper.appendChild(this.playerWrapper);
+      } catch (e) {
+        reject();
+      }
+    })
+      .then(() => {
+        setTimeout(() => this.createPlayer(), 1);
+      })
+      .catch(() => {
+        this.deletePlayer();
+        setTimeout(() => this.createWrapper(), 100);
+      });
+  },
+
+  /**
+   * Creates a player instance
+   */
+  createPlayer() {
+    new Promise((resolve, reject) => {
+      if (!this.playerWrapper || this.playerWrapper.offsetParent === null)
+        reject();
+      if (this.player !== null) resolve();
+
       try {
         const inFullscreenRegion = this.inFullscreenRegion(this.wrapper);
         this.player = videojs(this.playerWrapper, {
@@ -183,44 +204,61 @@ Module.register("MMM-VideoServerPlayer", {
             nativeVideoTracks: false
           }
         });
+
         this.player.pause();
         this.player.currentTime(0);
-        this.player.on("ended", () => {
-          if (this.playlist.length === 0) {
-            this.player.pause();
-            this.player.currentTime(0);
-          } else {
-            const currentIndex = this.playlist.findIndex((video) => {
-              return video.src === this.player.currentSrc();
-            });
-            const nextIndex = (currentIndex + 1) % this.playlist.length;
-            this.changeVideoSource(nextIndex === 0 ? 0 : nextIndex);
-          }
-        });
-        this.player.on("error", () => {
-          const currentIndex = this.playlist.findIndex((video) => {
-            return video.src === this.player.currentSrc();
+        this.player.on("ended", () =>
+          this.sendNotification("NEXT", {
+            currentIndex: this.currentVideo?.index ?? null
+          })
+        );
+        this.player.on("error", (error) => {
+          Log.error(`${this.logPrefix}${error}`);
+          this.sendNotification("NEXT", {
+            currentIndex: this.currentVideo?.index ?? null
           });
-          const nextIndex = (currentIndex + 1) % this.playlist.length;
-          Log.error(
-            `${this.logPrefix}Failed to play ${this.playlist[currentIndex].name}`
-          );
-          this.changeVideoSource(nextIndex === 0 ? 0 : nextIndex);
         });
+        resolve();
       } catch (e) {
-        if (this.player !== null) {
-          try {
-            this.player.dispose();
-          } catch (_) {}
-        }
-        this.player = null;
-        Log.error(e);
+        reject();
       }
-    }
-    if (this.player === null) {
-      setTimeout(() => this.updateDom(), 100);
-    }
+    })
+      .then(() => {
+        if (this.player === null) {
+          setTimeout(() => this.createWrapper(), 100);
+        } else {
+          this.ready = true;
+        }
+      })
+      .catch(() => {
+        this.deletePlayer();
+        setTimeout(() => this.createWrapper(), 100);
+      });
+  },
+
+  // Override function to retrieve DOM elements
+  getDom() {
+    this.createWrapper();
     return this.wrapper;
+  },
+
+  /**
+   * Notification send helper method
+   * @param {string} notification notification type
+   * @param {any} payload notification payload
+   */
+  sendNotification: function (notification, payload) {
+    this.sendSocketNotification(`${this.name}-${notification}`, payload);
+  },
+
+  // Override socket notification received method
+  socketNotificationReceived: function (notification, payload) {
+    switch (notification.replace(`${this.name}-`, "")) {
+      case "CURRENT_VIDEO":
+        if (payload !== null) this.changeCurrentVideo(payload);
+        break;
+      default:
+    }
   },
 
   // Load scripts

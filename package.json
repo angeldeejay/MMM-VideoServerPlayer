@@ -1,6 +1,6 @@
 {
   "name": "MMM-VideoServerPlayer",
-  "version": "2.5.0",
+  "version": "3.0.0",
   "description": "Play local videos in loop when MagicMirror is running in server-only mode",
   "main": "MMM-VideoServerPlayer.js",
   "author": "Andrés Vanegas <ukab72106@gmail.com>",
