@@ -18,7 +18,7 @@ Module.register("MMM-VideoServerPlayer", {
    * @property {str[]} sources sources list (rtsp urls to proxy. e.g rtsp://x.x.x.x:8554/live).
    */
   defaults: {
-    video: null,
+    videos: [],
     width: 640,
     height: 480
   },
@@ -30,36 +30,60 @@ Module.register("MMM-VideoServerPlayer", {
   wrapper: null,
   playerWrapper: null,
   player: null,
+  playlist: [],
+  updateTimer: null,
 
   // Overrides start method
   start() {
     this.config = {
       ...this.defaults,
-      ...this.config
+      ...this.config,
+      videos: (this.config.videos ?? []).filter(
+        (v, i, self) => self.indexOf(v) === i
+      )
     };
 
+    this.playlist = [];
     this.updateDom();
-    this.sendNotification("RESET", true);
-    setInterval(() => this.sendNotification("SET_CONFIG", this.config), 1000);
+    this.updateTimer = setInterval(
+      () => this.sendNotification("RESET", true),
+      1000
+    );
   },
 
   refresh: function () {
     window.location.reload(true);
   },
 
-  updateVideo(source) {
-    if (this.player === null) {
-      setTimeout(() => this.updateVideo(source), 1000);
+  changeVideoSource(index) {
+    if (this.playlist.length == 0) return;
+
+    Log.info(
+      `${this.logPrefix}Changing source to position ${
+        index + 1
+      }: ${JSON.stringify(this.playlist[index].name)}`
+    );
+    this.player.src({
+      src: this.playlist[index].src,
+      type: this.playlist[index].type
+    });
+  },
+
+  updateVideos(videos) {
+    if (!videos || !Array.isArray(videos)) {
+      this.sendNotification("RESET", true);
+      return;
+    } else if (this.player === null) {
+      setTimeout(() => this.updateVideos(videos), 1000);
       return;
     }
 
-    if (source !== null) {
-      console.log(source);
-      this.player.src(source);
-      this.player.load();
-      this.player.play();
+    this.playlist = videos;
+    if (videos.length > 0) {
+      this.changeVideoSource(0);
     } else {
       this.player.pause();
+      this.player.currentTime(0);
     }
     this.updateDom();
   },
@@ -77,11 +101,34 @@ Module.register("MMM-VideoServerPlayer", {
   socketNotificationReceived(notification, payload) {
     const self = this;
     switch (notification.replace(`${this.name}-`, "")) {
-      case "UPDATE_VIDEO":
-        this.updateVideo(payload);
+      case "READY":
+        clearInterval(this.updateTimer);
+        this.updateTimer = setInterval(
+          () => this.sendNotification("SET_CONFIG", this.config),
+          1000
+        );
+
+        break;
+      case "UPDATE_VIDEOS":
+        this.updateVideos(payload);
         break;
       default:
     }
+  },
+
+  inFullscreenRegion(element) {
+    if (element.parentNode) {
+      if (
+        element.parentNode.classList &&
+        element.parentNode.classList.contains("region") &&
+        element.parentNode.classList.contains("fullscreen")
+      ) {
+        return true;
+      } else {
+        return this.inFullscreenRegion(element.parentNode);
+      }
+    }
+    return false;
   },
 
   // Override function to retrieve DOM elements
@@ -106,16 +153,21 @@ Module.register("MMM-VideoServerPlayer", {
       this.playerWrapper.offsetParent !== null
     ) {
       try {
+        const inFullscreenRegion = this.inFullscreenRegion(this.wrapper);
         this.player = videojs(this.playerWrapper, {
           autoplay: true,
           controls: false,
           muted: "muted",
           preload: "auto",
-          width: this.config.width ?? this.defaults.width,
-          height: this.config.height ?? this.defaults.height,
+          ...(inFullscreenRegion
+            ? { fill: true }
+            : {
+                width: this.config.width ?? this.defaults.width,
+                height: this.config.height ?? this.defaults.height
+              }),
           fluid: true,
           liveui: true,
-          loop: true,
+          loop: false,
           loadingSpinner: false,
           enableSourceset: true,
           inactivityTimeout: 0,
@@ -130,6 +182,30 @@ Module.register("MMM-VideoServerPlayer", {
             nativeAudioTracks: false,
             nativeVideoTracks: false
           }
+        });
+        this.player.pause();
+        this.player.currentTime(0);
+        this.player.on("ended", () => {
+          if (this.playlist.length === 0) {
+            this.player.pause();
+            this.player.currentTime(0);
+          } else {
+            const currentIndex = this.playlist.findIndex((video) => {
+              return video.src === this.player.currentSrc();
+            });
+            const nextIndex = (currentIndex + 1) % this.playlist.length;
+            this.changeVideoSource(nextIndex === 0 ? 0 : nextIndex);
+          }
+        });
+        this.player.on("error", () => {
+          const currentIndex = this.playlist.findIndex((video) => {
+            return video.src === this.player.currentSrc();
+          });
+          const nextIndex = (currentIndex + 1) % this.playlist.length;
+          Log.error(
+            `${this.logPrefix}Failed to play ${this.playlist[currentIndex].name}`
+          );
+          this.changeVideoSource(nextIndex === 0 ? 0 : nextIndex);
         });
       } catch (e) {
         if (this.player !== null) {
