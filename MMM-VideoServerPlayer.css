@@ -19,6 +19,10 @@
 .region.fullscreen.below
   .module.MMM-VideoServerPlayer
   .player_MMM-VideoServerPlayer,
+.region.fullscreen.below
+  .module.MMM-VideoServerPlayer
+  .player_MMM-VideoServerPlayer,
+.region.fullscreen.below .module.MMM-VideoServerPlayer video-js,
 .region.fullscreen.below .module.MMM-VideoServerPlayer video {
   width: 100vw !important;
   height: 100vh !important;
