@@ -61,7 +61,7 @@ Module.register("MMM-VideoServerPlayer", {
           shuffle: this.config.shuffle,
           currentIndex: this.currentVideo?.index ?? null
         }),
-      100
+      1000
     );
   },
 
@@ -75,7 +75,7 @@ Module.register("MMM-VideoServerPlayer", {
       return;
 
     if (!this.ready) {
-      setTimeout(() => this.changeCurrentVideo(videoData), 100);
+      setTimeout(() => this.changeCurrentVideo(videoData), 500);
       return;
     }
 
@@ -131,11 +131,11 @@ Module.register("MMM-VideoServerPlayer", {
       }
     })
       .then(() => {
-        setTimeout(() => this.createPlayerWrapper(), 1);
+        setTimeout(() => this.createPlayerWrapper(), 100);
       })
       .catch(() => {
         this.deletePlayer();
-        setTimeout(() => this.createWrapper(), 100);
+        setTimeout(() => this.createWrapper(), 500);
       });
   },
 
@@ -156,11 +156,11 @@ Module.register("MMM-VideoServerPlayer", {
       }
     })
       .then(() => {
-        setTimeout(() => this.createPlayer(), 1);
+        setTimeout(() => this.createPlayer(), 100);
       })
       .catch(() => {
         this.deletePlayer();
-        setTimeout(() => this.createWrapper(), 100);
+        setTimeout(() => this.createWrapper(), 500);
       });
   },
 
@@ -225,14 +225,14 @@ Module.register("MMM-VideoServerPlayer", {
     })
       .then(() => {
         if (this.player === null) {
-          setTimeout(() => this.createWrapper(), 100);
+          setTimeout(() => this.createWrapper(), 500);
         } else {
           this.ready = true;
         }
       })
       .catch(() => {
         this.deletePlayer();
-        setTimeout(() => this.createWrapper(), 100);
+        setTimeout(() => this.createWrapper(), 500);
       });
   },
 
