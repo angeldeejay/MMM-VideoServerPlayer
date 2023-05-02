@@ -91,11 +91,7 @@ module.exports = NodeHelper.create({
 
     this.changeTimeout = setTimeout(() => {
       Log.info(
-        `${this.logPrefix}Setting current video to ${JSON.stringify(
-          this.currentVideo,
-          null,
-          2
-        )}`
+        `${this.logPrefix}Setting current video to ${this.currentVideo.video}`
       );
       this._sendNotification("CURRENT_VIDEO", this.currentVideo);
       this.changeTimeout = null;
