@@ -31,8 +31,8 @@ Module.register("MMM-VideoServerPlayer", {
   wrapper: null,
   playerWrapper: null,
   player: null,
-  currentVideo: null,
   ready: false,
+  currentVideo: null,
 
   // Overrides start method
   start() {
@@ -58,8 +58,7 @@ Module.register("MMM-VideoServerPlayer", {
       () =>
         this.sendNotification("SET_CONFIG", {
           videos: this.config.videos,
-          shuffle: this.config.shuffle,
-          currentIndex: this.currentVideo?.index ?? null
+          shuffle: this.config.shuffle
         }),
       1000
     );
@@ -82,7 +81,7 @@ Module.register("MMM-VideoServerPlayer", {
     this.currentVideo = videoData;
     Log.info(`${this.logPrefix}Playing now: ${videoData.name}`);
     this.player.src({
-      src: this.currentVideo.src,
+      src: `/${this.name}/video`,
       type: this.currentVideo.type
     });
   },
@@ -177,7 +176,8 @@ Module.register("MMM-VideoServerPlayer", {
         const inFullscreenRegion = this.inFullscreenRegion(this.wrapper);
         this.player = videojs(this.playerWrapper, {
           autoplay: true,
-          controls: false,
+          controls: true,
+          // controls: false,
           muted: "muted",
           preload: "auto",
           ...(inFullscreenRegion
@@ -207,15 +207,20 @@ Module.register("MMM-VideoServerPlayer", {
 
         this.player.pause();
         this.player.currentTime(0);
-        this.player.on("ended", () =>
-          this.sendNotification("NEXT", {
-            currentIndex: this.currentVideo?.index ?? null
-          })
-        );
+        this.player.on("timeupdate", () => {
+          const timeToEnd = this.player.duration() - this.player.currentTime();
+          if (timeToEnd < 5) {
+            this.sendSocketNotification("NEXT", {
+              ...this.currentVideo,
+              timeout: Math.max(0, timeToEnd * 1000 - 100)
+            });
+          }
+        });
         this.player.on("error", (error) => {
           Log.error(`${this.logPrefix}${error}`);
           this.sendNotification("NEXT", {
-            currentIndex: this.currentVideo?.index ?? null
+            ...this.currentVideo,
+            timeout: 0
           });
         });
         resolve();
