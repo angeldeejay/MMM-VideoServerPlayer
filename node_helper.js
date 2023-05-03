@@ -22,6 +22,7 @@ module.exports = NodeHelper.create({
   shuffle: true,
 
   start() {
+    this.info("Starting");
     this.busy = false;
     this.shuffle = true;
     this.videos = [];
@@ -32,7 +33,24 @@ module.exports = NodeHelper.create({
       this._sendNotification("CURRENT_VIDEO", this.currentVideo);
     }, 1000);
     this.setProxy();
-    Log.info(`${this.logPrefix}Started`);
+    this.info("Started");
+  },
+
+  // Logging wrapper
+  log(msg, ...args) {
+    Log.log(`${this.logPrefix}${msg}`, ...args);
+  },
+  info(msg, ...args) {
+    Log.info(`${this.logPrefix}${msg}`, ...args);
+  },
+  debug(msg, ...args) {
+    Log.debug(`${this.logPrefix}${msg}`, ...args);
+  },
+  error(msg, ...args) {
+    Log.error(`${this.logPrefix}${msg}`, ...args);
+  },
+  warning(msg, ...args) {
+    Log.warn(`${this.logPrefix}${msg}`, ...args);
   },
 
   shuffleArray(array) {
@@ -64,7 +82,7 @@ module.exports = NodeHelper.create({
     const delVideos = currentVideos.filter((v) => !payloadVideos.includes(v));
     const changes = newVideos.length + delVideos.length;
     if (changes > 0 || this.shuffle !== config.shuffle) {
-      Log.info(`${this.logPrefix}${changes} videos received`);
+      this.info(`${changes} videos received`);
       this.shuffle = config.shuffle;
       this.videos = (
         this.shuffle ? this.shuffleArray(payloadVideos) : payloadVideos
@@ -85,17 +103,18 @@ module.exports = NodeHelper.create({
     this.busy = false;
   },
 
-  setCurrentVideo(index = 0, timeout = 0) {
-    this.currentVideo = this.videos[index];
+  setCurrentVideo(index = 0, delay = 0) {
     if (this.changeTimeout !== null) return;
-
+    this.debug(
+      `Video will change to ${this.videos[index].name} ` +
+        (delay > 0 ? `in ${delay} ms` : `now`)
+    );
     this.changeTimeout = setTimeout(() => {
-      Log.info(
-        `${this.logPrefix}Setting current video to ${this.currentVideo.video}`
-      );
+      this.currentVideo = this.videos[index];
+      this.debug(`Video changed to ${this.currentVideo.video}`);
       this._sendNotification("CURRENT_VIDEO", this.currentVideo);
       this.changeTimeout = null;
-    }, timeout);
+    }, delay);
   },
 
   _sendNotification(notification, payload) {
@@ -109,7 +128,12 @@ module.exports = NodeHelper.create({
         this.processConfig(payload);
         break;
       case "NEXT":
-        if (this.videos.length === 0) break;
+        if (
+          this.changeTimeout !== null ||
+          this.videos.length === 0 ||
+          this.currentVideo === null
+        )
+          break;
         const currentIndex = payload?.index ?? this.videos.length;
         const timeout = Math.max(0, (payload?.timeout ?? 1) - 1);
         const nextIndex = (currentIndex + 1) % this.videos.length;
@@ -136,6 +160,6 @@ module.exports = NodeHelper.create({
         fs.createReadStream(this.currentVideo.video).pipe(res);
       }
     });
-    Log.info(`${this.logPrefix}Proxy created: /${this.name}/video`);
+    this.info(`Proxy created: /${this.name}/video`);
   }
 });
