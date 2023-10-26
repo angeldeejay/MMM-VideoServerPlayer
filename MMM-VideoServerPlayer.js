@@ -220,7 +220,7 @@ Module.register("MMM-VideoServerPlayer", {
         }
         this.player.on("timeupdate", () => {
           const timeToEnd = this.player.duration() - this.player.currentTime();
-          if (timeToEnd < 5) {
+          if (timeToEnd < 1) {
             this.sendSocketNotification("NEXT", {
               ...this.currentVideo,
               timeout: Math.max(0, timeToEnd * 1000 - 100)
