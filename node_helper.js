@@ -15,11 +15,15 @@ const nocache = require("nocache");
 module.exports = NodeHelper.create({
   name: path.basename(__dirname),
   logPrefix: `${path.basename(__dirname)} :: `,
+
   videos: [],
   currentVideo: null,
   changeTimeout: null,
   busy: false,
   shuffle: true,
+
+  _broadcastIntervalId: null,
+  _lastVideoPath: null,
 
   start() {
     this.info("Starting");
@@ -28,30 +32,33 @@ module.exports = NodeHelper.create({
     this.videos = [];
     this.changeTimeout = null;
     this.currentVideo = null;
-    setInterval(() => {
+    this._lastVideoPath = null;
+
+    this._broadcastIntervalId = setInterval(() => {
       if (this.busy || this.currentVideo === null) return;
       this._sendNotification("CURRENT_VIDEO", this.currentVideo);
     }, 1000);
+
     this.setProxy();
     this.info("Started");
   },
 
-  // Logging wrapper
-  log(msg, ...args) {
-    Log.log(`${this.logPrefix}${msg}`, ...args);
+  stop() {
+    if (this._broadcastIntervalId !== null) {
+      clearInterval(this._broadcastIntervalId);
+      this._broadcastIntervalId = null;
+    }
+    if (this.changeTimeout !== null) {
+      clearTimeout(this.changeTimeout);
+      this.changeTimeout = null;
+    }
   },
-  info(msg, ...args) {
-    Log.info(`${this.logPrefix}${msg}`, ...args);
-  },
-  debug(msg, ...args) {
-    Log.debug(`${this.logPrefix}${msg}`, ...args);
-  },
-  error(msg, ...args) {
-    Log.error(`${this.logPrefix}${msg}`, ...args);
-  },
-  warning(msg, ...args) {
-    Log.warn(`${this.logPrefix}${msg}`, ...args);
-  },
+
+  log(msg, ...args) { Log.log(`${this.logPrefix}${msg}`, ...args); },
+  info(msg, ...args) { Log.info(`${this.logPrefix}${msg}`, ...args); },
+  debug(msg, ...args) { Log.debug(`${this.logPrefix}${msg}`, ...args); },
+  error(msg, ...args) { Log.error(`${this.logPrefix}${msg}`, ...args); },
+  warning(msg, ...args) { Log.warn(`${this.logPrefix}${msg}`, ...args); },
 
   shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
@@ -61,54 +68,95 @@ module.exports = NodeHelper.create({
     return array;
   },
 
+  _resolveVideoPath(videoPath) {
+    if (!videoPath) return null;
+    return path.isAbsolute(videoPath)
+      ? videoPath
+      : path.resolve(__dirname, videoPath);
+  },
+
+  _scanDirectory(videoPath) {
+    const resolved = this._resolveVideoPath(videoPath);
+    if (!resolved) return [];
+
+    try {
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+        this.warning(`Video path not found or not a directory: ${resolved}`);
+        return [];
+      }
+      return fs.readdirSync(resolved)
+        .map(f => path.join(resolved, f))
+        .filter(f => {
+          try {
+            return fs.statSync(f).isFile() && (mime.getType(f) ?? "").startsWith("video/");
+          } catch {
+            return false;
+          }
+        });
+    } catch (err) {
+      this.error(`Failed to scan directory ${resolved}: ${err.message}`);
+      return [];
+    }
+  },
+
+  _buildVideoList(filePaths, shuffle) {
+    const ordered = shuffle ? this.shuffleArray([...filePaths]) : filePaths;
+    this.videos = ordered.map((v, i) => ({
+      index: i,
+      name: path.basename(v),
+      video: v,
+      size: fs.statSync(v).size,
+      type: mime.getType(v)
+    }));
+    this.info(`Loaded ${this.videos.length} video(s)`);
+
+    // If currently playing a video that no longer exists, reset
+    if (this.currentVideo !== null) {
+      const stillExists = this.videos.some(v => v.video === this.currentVideo.video);
+      if (!stillExists) {
+        this.currentVideo = null;
+        if (this.changeTimeout !== null) {
+          clearTimeout(this.changeTimeout);
+          this.changeTimeout = null;
+        }
+      }
+    }
+  },
+
   processConfig(payload) {
     if (this.busy) return;
-
     this.busy = true;
-    const config = {
-      videos: payload.videos ?? [],
-      currentIndex: payload.currentIndex ?? null,
-      shuffle: payload.shuffle ?? true
-    };
 
-    const payloadVideos = config.videos
-      .filter((v, i, self) => self.indexOf(v) === i)
-      .filter((v) => fs.existsSync(v));
-    const currentVideos = this.videos
-      .map((v) => v.video)
-      .filter((v, i, self) => self.indexOf(v) === i)
-      .filter((v) => fs.existsSync(v));
-    const newVideos = payloadVideos.filter((v) => !currentVideos.includes(v));
-    const delVideos = currentVideos.filter((v) => !payloadVideos.includes(v));
-    const changes = newVideos.length + delVideos.length;
-    if (changes > 0 || this.shuffle !== config.shuffle) {
-      this.info(`${changes} videos received`);
-      this.shuffle = config.shuffle;
-      this.videos = (
-        this.shuffle ? this.shuffleArray(payloadVideos) : payloadVideos
-      ).map((v, i) => {
-        return {
-          index: i,
-          name: path.basename(v),
-          video: v,
-          size: fs.statSync(v).size,
-          type: mime.getType(v)
-        };
-      });
+    const videoPath = payload.videoPath ?? "";
+    const shuffle = payload.shuffle ?? true;
+    const scanned = this._scanDirectory(videoPath);
+
+    const currentPaths = this.videos.map(v => v.video);
+    const pathsChanged =
+      scanned.length !== currentPaths.length ||
+      scanned.some(p => !currentPaths.includes(p));
+
+    if (pathsChanged || shuffle !== this.shuffle) {
+      this.shuffle = shuffle;
+      this._buildVideoList(scanned, shuffle);
     }
 
     if (this.videos.length > 0 && this.currentVideo === null) {
       this.setCurrentVideo();
     }
+
     this.busy = false;
   },
 
   setCurrentVideo(index = 0, delay = 0) {
     if (this.changeTimeout !== null) return;
+    if (!this.videos[index]) return;
+
     this.debug(
-      `Video will change to ${this.videos[index].name} ` +
-        (delay > 0 ? `in ${delay} ms` : `now`)
+      `Video will change to ${this.videos[index].name}` +
+      (delay > 0 ? ` in ${delay}ms` : " now")
     );
+
     this.changeTimeout = setTimeout(() => {
       this.currentVideo = this.videos[index];
       this.debug(`Video changed to ${this.currentVideo.video}`);
@@ -127,39 +175,49 @@ module.exports = NodeHelper.create({
       case "SET_CONFIG":
         this.processConfig(payload);
         break;
-      case "NEXT":
+
+      case "NEXT": {
         if (
           this.changeTimeout !== null ||
           this.videos.length === 0 ||
           this.currentVideo === null
-        )
-          break;
+        ) break;
+
         const currentIndex = payload?.index ?? this.videos.length;
         const timeout = Math.max(0, (payload?.timeout ?? 1) - 1);
         const nextIndex = (currentIndex + 1) % this.videos.length;
-        if (nextIndex === this.currentVideo.index) return;
+        if (nextIndex === this.currentVideo.index) break;
         this.setCurrentVideo(nextIndex, timeout);
         break;
+      }
+
       default:
     }
   },
 
-  /**
-   * this you can create extra routes for your module
-   */
   setProxy() {
     this.expressApp.set("etag", false);
-    this.expressApp.use(`/${this.name}/video`, nocache(), (req, res, ..._) => {
+    this.expressApp.use(`/${this.name}/video`, nocache(), (req, res) => {
       if (this.currentVideo === null) {
         res.sendStatus(504);
-      } else {
-        res.writeHead(200, {
-          "Content-Length": this.currentVideo.size,
-          "Content-Type": this.currentVideo.type
-        });
-        fs.createReadStream(this.currentVideo.video).pipe(res);
+        return;
       }
+
+      const { video, size, type } = this.currentVideo;
+      res.writeHead(200, {
+        "Content-Length": size,
+        "Content-Type": type
+      });
+
+      const stream = fs.createReadStream(video);
+      req.on("close", () => stream.destroy());
+      stream.on("error", (err) => {
+        this.error(`Stream error for ${video}: ${err.message}`);
+        if (!res.headersSent) res.sendStatus(500);
+      });
+      stream.pipe(res);
     });
+
     this.info(`Proxy created: /${this.name}/video`);
   }
 });
